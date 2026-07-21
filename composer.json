@@ -1,0 +1,44 @@
+{
+    "name": "bayarcash/laravel",
+    "description": "Laravel integration for the Bayarcash payment gateway.",
+    "keywords": ["bayarcash", "laravel", "payment", "gateway", "fpx", "malaysia"],
+    "homepage": "https://github.com/bayarcash/laravel",
+    "license": "MIT",
+    "require": {
+        "php": "^8.1",
+        "bayarcash/php-sdk": "^3.0",
+        "illuminate/support": "^10.0|^11.0|^12.0",
+        "illuminate/database": "^10.0|^11.0|^12.0",
+        "illuminate/http": "^10.0|^11.0|^12.0",
+        "illuminate/contracts": "^10.0|^11.0|^12.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0|^9.0|^10.0",
+        "phpunit/phpunit": "^10.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Bayarcash\\Laravel\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Bayarcash\\Laravel\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Bayarcash\\Laravel\\BayarcashServiceProvider"
+            ],
+            "aliases": {
+                "Bayarcash": "Bayarcash\\Laravel\\Facades\\Bayarcash"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
