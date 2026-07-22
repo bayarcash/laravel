@@ -4,7 +4,7 @@
 [![Total Downloads](https://img.shields.io/packagist/dt/bayarcash/laravel.svg?style=flat-square)](https://packagist.org/packages/bayarcash/laravel)
 [![PHP Version](https://img.shields.io/packagist/php-v/bayarcash/laravel.svg?style=flat-square)](https://packagist.org/packages/bayarcash/laravel)
 [![License](https://img.shields.io/packagist/l/bayarcash/laravel.svg?style=flat-square)](https://packagist.org/packages/bayarcash/laravel)
-[![Tests](https://img.shields.io/github/actions/workflow/status/bayarcash/laravel/tests.yml?branch=main&style=flat-square&label=tests)](https://github.com/bayarcash/laravel/actions/workflows/tests.yml)
+[![Tests](https://github.com/bayarcash/laravel/actions/workflows/tests.yml/badge.svg)](https://github.com/bayarcash/laravel/actions/workflows/tests.yml)
 
 A Laravel integration for the [Bayarcash](https://bayar.cash) payment gateway. It wraps the framework-agnostic [`bayarcash/php-sdk`](https://packagist.org/packages/bayarcash/php-sdk) and adds a Laravel-idiomatic developer experience: config, a facade, a model trait, optional database persistence, automatic callback/return handling with checksum verification, scheduled reconciliation, and events.
 
