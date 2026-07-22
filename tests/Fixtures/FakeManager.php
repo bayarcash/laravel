@@ -9,9 +9,15 @@ namespace Bayarcash\Laravel\Tests\Fixtures;
  */
 class FakeManager
 {
+    /**
+     * @param  object  $stub  Stub SDK returned by sdk()/for().
+     * @param  string  $secret  Default (no-tenant) secret.
+     * @param  array<string, string>  $tenantSecrets  Per-tenant secret overrides.
+     */
     public function __construct(
         public object $stub,
         public string $secret = 'test-secret',
+        public array $tenantSecrets = [],
     ) {
     }
 
@@ -27,6 +33,10 @@ class FakeManager
 
     public function secretKey(mixed $tenant = null): string
     {
+        if ($tenant !== null && array_key_exists((string) $tenant, $this->tenantSecrets)) {
+            return $this->tenantSecrets[(string) $tenant];
+        }
+
         return $this->secret;
     }
 

@@ -15,9 +15,6 @@ use Bayarcash\Laravel\Contracts\CredentialResolver;
  */
 class BayarcashManager
 {
-    /**
-     * The Bayarcash API version this package targets.
-     */
     public const API_VERSION = 'v3';
 
     /**
@@ -36,17 +33,11 @@ class BayarcashManager
     ) {
     }
 
-    /**
-     * Get the default (config-credential) SDK instance.
-     */
     public function sdk(): Bayarcash
     {
         return $this->for(null);
     }
 
-    /**
-     * Get an SDK instance scoped to the given tenant.
-     */
     public function for(mixed $tenant = null): Bayarcash
     {
         $creds = $this->credentials($tenant);
@@ -55,17 +46,12 @@ class BayarcashManager
         return $this->instances[$key] ??= $this->build($creds);
     }
 
-    /**
-     * Get the API secret key for the given tenant.
-     */
     public function secretKey(mixed $tenant = null): string
     {
         return (string) ($this->credentials($tenant)['secret_key'] ?? '');
     }
 
     /**
-     * Resolve the credential set for the given tenant.
-     *
      * @return array{token: string, secret_key: string, sandbox: bool}
      */
     protected function credentials(mixed $tenant): array
@@ -82,8 +68,6 @@ class BayarcashManager
     }
 
     /**
-     * Build a fresh SDK instance from a credential set (always API v3).
-     *
      * @param  array{token: string, secret_key: string, sandbox: bool}  $creds
      */
     protected function build(array $creds): Bayarcash
@@ -100,8 +84,6 @@ class BayarcashManager
     }
 
     /**
-     * Proxy unknown method calls to the default SDK instance.
-     *
      * @param  array<int, mixed>  $args
      */
     public function __call(string $method, array $args): mixed

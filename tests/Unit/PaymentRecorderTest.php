@@ -104,7 +104,7 @@ class PaymentRecorderTest extends TestCase
 
     public function test_stateless_builds_unsaved_model_and_still_fires_event(): void
     {
-        config()->set('bayarcash.persistence', false);
+        config()->set('bayarcash.store_records', false);
 
         Event::fake([PaymentSucceeded::class]);
 

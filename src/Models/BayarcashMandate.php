@@ -22,9 +22,6 @@ class BayarcashMandate extends Model
         'expiry_date'    => 'date',
     ];
 
-    /**
-     * The model that owns this mandate (payer).
-     */
     public function owner(): MorphTo
     {
         return $this->morphTo();
@@ -35,9 +32,6 @@ class BayarcashMandate extends Model
         return $query->where('status', FpxDirectDebit::STATUS_ACTIVE);
     }
 
-    /**
-     * Human-readable status label.
-     */
     public function statusLabel(): string
     {
         return FpxDirectDebit::getStatusText((int) $this->status);

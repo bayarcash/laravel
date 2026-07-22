@@ -10,6 +10,13 @@ A Laravel integration for the [Bayarcash](https://bayar.cash) payment gateway. I
 
 Targets **Bayarcash API v3**.
 
+It fits two setups:
+
+- **Single merchant** — one set of credentials in `.env`. Everything in [Usage](#usage) works out of the box.
+- **Multi-tenant (SaaS)** — each tenant has its own Bayarcash account with credentials stored in your database. See [Multi-tenant](#multi-tenant-credentials-in-the-database).
+
+Either way you choose whether to **store payment records** in your database with [`BAYARCASH_STORE_RECORDS`](#store-records-store-data-or-pass-through).
+
 ## Requirements
 
 - PHP 8.1+
@@ -44,7 +51,7 @@ BAYARCASH_API_SECRET_KEY=your-api-secret-key
 BAYARCASH_SANDBOX=true
 
 # Optional
-BAYARCASH_PERSISTENCE=true
+BAYARCASH_STORE_RECORDS=true
 BAYARCASH_CALLBACK_PATH=bayarcash/callback
 BAYARCASH_RETURN_PATH=bayarcash/return
 BAYARCASH_RETURN_REDIRECT=payments.thank-you   # named route or absolute URL
@@ -93,7 +100,7 @@ $intent = $order->charge([
 return redirect()->away($intent->url);
 ```
 
-The checksum is generated for you. When persistence is enabled, a pending
+The checksum is generated for you. When record storage is enabled, a pending
 `BayarcashTransaction` is stored and linked to `$order`, and a `PaymentCreated`
 event fires.
 
@@ -179,15 +186,130 @@ You can also run it manually:
 php artisan bayarcash:reconcile
 ```
 
-Reconciliation requires persistence.
+Reconciliation requires stored records.
 
-## Stateless mode
+## Store records (store data, or pass-through)
 
-Set `BAYARCASH_PERSISTENCE=false` (or simply do not publish the migrations) to
-use the package as a thin SDK wrapper. In this mode `charge()` /
-`enrollDirectDebit()` return the SDK resource without writing to the database,
-and the callback/return handlers still verify checksums and fire events — they
-just skip persistence.
+`BAYARCASH_STORE_RECORDS` decides whether the package keeps a local copy of every
+payment and mandate in your database.
+
+### `BAYARCASH_STORE_RECORDS=true` (default) — stateful
+
+Transactions and mandates are recorded in the `bayarcash_transactions` and
+`bayarcash_mandates` tables. This is what you get:
+
+| Capability | What happens |
+|---|---|
+| **Pending row on `charge()`** | A `BayarcashTransaction` is created, linked to the payable model (`$order->payments()`), storing the `payment_intent_id` so the callback can complete the *same* row. |
+| **Automatic webhook writes** | Callbacks update the record's `status`, set `paid_at` on success, and store the verified payload in `raw_callback`. |
+| **Queryable history** | `$order->payments()->successful()`, `->pending()`, status labels, reporting — no extra API calls. |
+| **Reconciliation** | `bayarcash:reconcile` can re-query and auto-cancel stale pending payments (it needs the stored rows to know what to reconcile). |
+
+Requires the migrations:
+
+```bash
+php artisan vendor:publish --tag=bayarcash-migrations
+php artisan migrate
+```
+
+Use this mode when you want an authoritative local record of payments (reporting,
+reconciliation, linking payments to your models) — the typical SaaS setup.
+
+### `BAYARCASH_STORE_RECORDS=false` — stateless (pass-through)
+
+The package becomes a thin SDK wrapper. `charge()` / `enrollDirectDebit()` create
+the intent and **return it without touching the database**, and the callback/return
+routes still **verify checksums and fire events** — they just skip persistence.
+No migrations are needed, and `bayarcash:reconcile` is disabled. Use this when you
+already store payment state yourself and only want checksum-safe request/callback
+handling.
+
+## Multi-tenant (credentials in the database)
+
+In a SaaS app each tenant has its own Bayarcash account. Store each tenant's
+credentials in your own table and let the package resolve them per request. There
+is **one shared webhook** for every tenant — no tenant id in the URL.
+
+### 1. Store per-tenant credentials
+
+The package ships an encrypted `bayarcash_accounts` table for this. Publish and run it:
+
+```bash
+php artisan vendor:publish --tag=bayarcash-tenant-migrations
+php artisan migrate
+```
+
+Then store each tenant's credentials — `token` and `secret_key` are encrypted at rest:
+
+```php
+use Bayarcash\Laravel\Models\BayarcashAccount;
+
+BayarcashAccount::create([
+    'tenant_id'  => $tenant->id,
+    'token'      => $token,
+    'secret_key' => $secretKey,
+    'sandbox'    => false,
+]);
+```
+
+### 2. Turn multi-tenant on
+
+Point the package at its built-in resolver and enable multi-tenant:
+
+```php
+// config/bayarcash.php
+'credential_resolver' => \Bayarcash\Laravel\DatabaseCredentialResolver::class,
+```
+
+```dotenv
+BAYARCASH_MULTI_TENANT=true
+```
+
+**Credentials already elsewhere?** If your tenants' Bayarcash credentials live on
+your own model/table, skip the migration and implement the resolver yourself
+instead — return `token`, `secret_key`, and `sandbox` for a tenant:
+
+```php
+use Bayarcash\Laravel\Contracts\CredentialResolver;
+
+class MyCredentialResolver implements CredentialResolver
+{
+    public function resolve(mixed $tenant = null): array
+    {
+        $account = BayarcashAccount::where('tenant_id', $tenant)->firstOrFail();
+
+        return [
+            'token'      => $account->token,
+            'secret_key' => $account->secret_key,
+            'sandbox'    => (bool) $account->sandbox,
+        ];
+    }
+}
+```
+
+### 3. Create payments per tenant
+
+Pass the tenant to `charge()` / `enrollDirectDebit()`. The package generates the
+checksum and calls the gateway with **that tenant's** credentials, and stamps the
+stored row with `tenant_id`:
+
+```php
+$intent = $order->charge($data, tenant: $tenantId);
+```
+
+With no `tenant:` argument the default `.env` credentials are used — so single- and
+multi-tenant code live side by side.
+
+### 4. One shared webhook for every tenant
+
+Point **every** tenant's portal Callback/Return URLs at the same package routes —
+`https://your-app.test/bayarcash/callback` and `.../bayarcash/return`. There is no
+per-tenant URL.
+
+The package matches each callback to its local record, resolves **that tenant's**
+secret, and verifies the checksum — rejecting with **`403`** (fail closed) when no
+record matches. This lookup is why multi-tenant mode requires
+`BAYARCASH_STORE_RECORDS=true`.
 
 ## The facade
 

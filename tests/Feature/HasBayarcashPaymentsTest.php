@@ -17,6 +17,8 @@ class HasBayarcashPaymentsTest extends TestCase
 {
     use RefreshDatabase;
 
+    private object $stub;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -26,9 +28,13 @@ class HasBayarcashPaymentsTest extends TestCase
             $table->timestamps();
         });
 
-        $stub = new class {
+        $this->stub = new class {
+            public ?string $checksumSecret = null;
+
             public function createPaymentIntentChecksumValue($secret, $data): string
             {
+                $this->checksumSecret = $secret;
+
                 return 'sig';
             }
 
@@ -40,7 +46,10 @@ class HasBayarcashPaymentsTest extends TestCase
             }
         };
 
-        $this->app->instance('bayarcash.manager', new FakeManager($stub));
+        $this->app->instance('bayarcash.manager', new FakeManager(
+            $this->stub,
+            tenantSecrets: ['t1' => 'secret-t1'],
+        ));
     }
 
     public function test_charge_creates_intent_and_persists_pending_transaction(): void
@@ -85,9 +94,9 @@ class HasBayarcashPaymentsTest extends TestCase
         $this->assertNotEmpty($buyer->payments()->first()->order_number);
     }
 
-    public function test_charge_skips_persistence_when_disabled(): void
+    public function test_charge_skips_storing_records_when_disabled(): void
     {
-        config()->set('bayarcash.persistence', false);
+        config()->set('bayarcash.store_records', false);
 
         $buyer = Buyer::create([]);
 
@@ -98,5 +107,35 @@ class HasBayarcashPaymentsTest extends TestCase
 
         $this->assertSame('https://pay.test', $intent->url);
         $this->assertCount(0, $buyer->payments()->get());
+    }
+
+    public function test_charge_with_tenant_uses_tenant_secret_and_stamps_tenant_id(): void
+    {
+        $buyer = Buyer::create([]);
+
+        $buyer->charge([
+            'payment_channel' => 1, 'order_number' => 'INV-T1', 'amount' => '10.00',
+            'payer_name' => 'A', 'payer_email' => 'a@b.com',
+        ], tenant: 't1');
+
+        // The checksum was generated with the tenant's secret, not the default.
+        $this->assertSame('secret-t1', $this->stub->checksumSecret);
+
+        $trx = $buyer->payments()->first();
+        $this->assertSame('t1', $trx->tenant_id);
+        $this->assertSame('INV-T1', $trx->order_number);
+    }
+
+    public function test_charge_without_tenant_stores_null_tenant_id(): void
+    {
+        $buyer = Buyer::create([]);
+
+        $buyer->charge([
+            'payment_channel' => 1, 'order_number' => 'INV-N', 'amount' => '10.00',
+            'payer_name' => 'A', 'payer_email' => 'a@b.com',
+        ]);
+
+        $this->assertSame('test-secret', $this->stub->checksumSecret);
+        $this->assertNull($buyer->payments()->first()->tenant_id);
     }
 }

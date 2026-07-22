@@ -21,9 +21,6 @@ class BayarcashTransaction extends Model
         'paid_at'      => 'datetime',
     ];
 
-    /**
-     * The model that owns this transaction (payer).
-     */
     public function owner(): MorphTo
     {
         return $this->morphTo();
@@ -44,9 +41,6 @@ class BayarcashTransaction extends Model
         return $query->where('status', Fpx::STATUS_FAILED);
     }
 
-    /**
-     * Human-readable status label.
-     */
     public function statusLabel(): string
     {
         return Fpx::getStatusText((int) $this->status);

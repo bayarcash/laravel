@@ -9,22 +9,18 @@ use Bayarcash\Laravel\Events\PaymentSucceeded;
 use Bayarcash\Laravel\Models\BayarcashTransaction;
 
 /**
- * Shared upsert + guards + event dispatch for transaction results.
- *
- * Used by the callback controller (via: callback, authoritative), the return
- * controller (via: return, best-effort) and the reconcile command
- * (via: requery). All three funnel through record() so matching, guards,
- * raw_callback handling and events behave identically.
+ * Shared upsert, guards and event dispatch for transaction results. The callback
+ * (authoritative), return (best-effort) and reconcile (requery) paths all funnel
+ * through record() so matching, guards and events behave identically.
  */
 class PaymentRecorder
 {
     /**
-     * Record a transaction result and fire the matching status event.
-     *
      * @param  array<string, mixed>  $data
      * @param  string  $via  One of: callback, return, requery.
+     * @param  string|null  $tenantId  Owning tenant, stamped when multi-tenant.
      */
-    public function record(array $data, string $via): BayarcashTransaction
+    public function record(array $data, string $via, ?string $tenantId = null): BayarcashTransaction
     {
         /** @var class-string<BayarcashTransaction> $model */
         $model = config('bayarcash.models.transaction', BayarcashTransaction::class);
@@ -32,8 +28,12 @@ class PaymentRecorder
         $status = isset($data['status']) && $data['status'] !== null ? (int) $data['status'] : null;
         $attributes = $this->attributes($data, $status, $via);
 
+        if ($tenantId !== null) {
+            $attributes['tenant_id'] = $tenantId;
+        }
+
         // Stateless mode: never touch the DB, but still fire events.
-        if (! config('bayarcash.persistence')) {
+        if (! config('bayarcash.store_records')) {
             $transaction = new $model($attributes);
             $this->fireEvent($transaction, null, $status);
 

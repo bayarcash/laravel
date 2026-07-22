@@ -124,12 +124,12 @@ class ReconcileCommandTest extends TestCase
         $this->assertSame(Fpx::STATUS_PENDING, BayarcashTransaction::where('payment_intent_id', 'pi_new')->first()->status);
     }
 
-    public function test_command_requires_persistence(): void
+    public function test_command_requires_store_records(): void
     {
-        config()->set('bayarcash.persistence', false);
+        config()->set('bayarcash.store_records', false);
 
         $this->artisan('bayarcash:reconcile')
-            ->expectsOutputToContain('requires persistence')
+            ->expectsOutputToContain('requires store_records')
             ->assertSuccessful();
     }
 }

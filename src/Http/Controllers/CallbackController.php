@@ -9,10 +9,12 @@ use Bayarcash\Laravel\Models\BayarcashMandate;
 use Bayarcash\Laravel\PaymentRecorder;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Authoritative POST callback handler. The checksum has already been verified
- * by the VerifyBayarcashSignature middleware before this runs.
+ * by the VerifyBayarcashSignature middleware before this runs; in multi-tenant
+ * mode that middleware also stashes the resolved tenant on the request.
  */
 class CallbackController
 {
@@ -24,14 +26,25 @@ class CallbackController
     {
         $data = $request->all();
         $recordType = $data['record_type'] ?? 'transaction';
+        $tenantId = $request->attributes->get('bayarcash_tenant');
 
         WebhookReceived::dispatch($recordType, $data);
 
-        match ($recordType) {
-            'transaction'                   => $this->recorder->record($data, 'callback'),
-            'bank_approval', 'authorization' => $this->handleMandate($data, $recordType),
-            default                         => null, // pre_transaction & others: acknowledged only
+        $handle = fn () => match ($recordType) {
+            'transaction'                    => $this->recorder->record($data, 'callback', $tenantId),
+            'bank_approval', 'authorization' => $this->handleMandate($data, $recordType, $tenantId),
+            default                          => null, // pre_transaction & others: acknowledged only
         };
+
+        // Guard against concurrent deliveries of the same order double-processing
+        // the record. Falls back to running directly when no order_number exists.
+        $orderNumber = $data['order_number'] ?? null;
+
+        if ($orderNumber !== null && $orderNumber !== '') {
+            Cache::lock('bayarcash-callback:' . $orderNumber, 10)->get($handle);
+        } else {
+            $handle();
+        }
 
         return response('OK', 200);
     }
@@ -41,7 +54,7 @@ class CallbackController
      *
      * @param  array<string, mixed>  $data
      */
-    protected function handleMandate(array $data, string $recordType): void
+    protected function handleMandate(array $data, string $recordType, ?string $tenantId = null): void
     {
         if (empty($data['mandate_id'])) {
             return;
@@ -66,7 +79,11 @@ class CallbackController
             $attributes['status'] = (int) $data['status'];
         }
 
-        if (config('bayarcash.persistence')) {
+        if ($tenantId !== null) {
+            $attributes['tenant_id'] = $tenantId;
+        }
+
+        if (config('bayarcash.store_records')) {
             $mandate = $model::updateOrCreate(['mandate_id' => $data['mandate_id']], $attributes);
         } else {
             $mandate = new $model(['mandate_id' => $data['mandate_id']] + $attributes);

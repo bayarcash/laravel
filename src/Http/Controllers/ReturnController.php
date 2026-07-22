@@ -2,6 +2,7 @@
 
 namespace Bayarcash\Laravel\Http\Controllers;
 
+use Bayarcash\Laravel\Concerns\ResolvesTenant;
 use Bayarcash\Laravel\Models\BayarcashTransaction;
 use Bayarcash\Laravel\PaymentRecorder;
 use Illuminate\Http\JsonResponse;
@@ -15,6 +16,8 @@ use Illuminate\Support\Facades\Route;
  */
 class ReturnController
 {
+    use ResolvesTenant;
+
     public function __construct(protected PaymentRecorder $recorder)
     {
     }
@@ -50,6 +53,10 @@ class ReturnController
     /**
      * Record the return payload only when its checksum verifies. Never aborts.
      *
+     * In multi-tenant mode the tenant is resolved from the payload's local
+     * record and the checksum is verified with that tenant's secret; when no
+     * record is found there is nothing to settle, so we skip (best-effort).
+     *
      * @param  array<string, mixed>  $data
      */
     protected function settle(array $data): ?BayarcashTransaction
@@ -59,11 +66,21 @@ class ReturnController
         }
 
         $manager = app('bayarcash.manager');
+        $tenantId = null;
 
-        if (! $manager->sdk()->verifyReturnUrlCallbackData($data, $manager->secretKey())) {
+        if (config('bayarcash.multi_tenant')) {
+            $tenantId = $this->resolveTenantFromPayload($data);
+
+            // No local record: best-effort, nothing to settle.
+            if ($tenantId === false) {
+                return null;
+            }
+        }
+
+        if (! $manager->sdk()->verifyReturnUrlCallbackData($data, $manager->secretKey($tenantId))) {
             return null;
         }
 
-        return $this->recorder->record($data, 'return');
+        return $this->recorder->record($data, 'return', $tenantId);
     }
 }

@@ -25,8 +25,8 @@ class ReconcileCommand extends Command
 
     public function handle(PaymentRecorder $recorder): int
     {
-        if (! config('bayarcash.persistence')) {
-            $this->warn('Bayarcash reconciliation requires persistence to be enabled.');
+        if (! config('bayarcash.store_records')) {
+            $this->warn('Bayarcash reconciliation requires store_records to be enabled.');
 
             return self::SUCCESS;
         }
@@ -86,8 +86,6 @@ class ReconcileCommand extends Command
     }
 
     /**
-     * Pending rows old enough to re-query.
-     *
      * @param  class-string<BayarcashTransaction>  $model
      */
     protected function pendingQuery(string $model, int $requeryAfter): Builder
@@ -128,9 +126,6 @@ class ReconcileCommand extends Command
         return $data;
     }
 
-    /**
-     * Whether a still-pending row has passed the cancel window.
-     */
     protected function shouldCancel(BayarcashTransaction $row, int $cancelAfter): bool
     {
         if (! in_array((int) $row->status, [Fpx::STATUS_NEW, Fpx::STATUS_PENDING], true)) {

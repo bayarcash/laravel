@@ -4,12 +4,12 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | API Credentials
+    | Credentials
     |--------------------------------------------------------------------------
     |
-    | Your Bayarcash Personal Access Token (PAT) and API Secret Key. Both are
-    | issued from the Bayarcash console. The secret key is used to generate
-    | and verify checksums for payloads and callbacks.
+    | Your Personal Access Token and API Secret Key from the Bayarcash console.
+    | The secret key signs request checksums and verifies the checksums on
+    | incoming callbacks.
     |
     */
 
@@ -21,8 +21,8 @@ return [
     | Environment
     |--------------------------------------------------------------------------
     |
-    | When "sandbox" is true the package talks to the Bayarcash sandbox. This
-    | package targets Bayarcash API v3 only; the SDK is always set to v3.
+    | Enable "sandbox" to route requests to the Bayarcash sandbox. The SDK
+    | always targets API v3. "timeout" is the HTTP request timeout in seconds.
     |
     */
 
@@ -31,25 +31,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Persistence
+    | Store Records
     |--------------------------------------------------------------------------
     |
-    | When false the package behaves as a stateless SDK wrapper: the trait
-    | helpers and callback/return handlers verify and fire events but never
-    | read from or write to the database.
+    | When disabled the package acts as a stateless SDK wrapper: callbacks are
+    | still verified and events still fire, but nothing is read from or written
+    | to the database.
     |
     */
 
-    'persistence' => env('BAYARCASH_PERSISTENCE', true),
+    'store_records' => env('BAYARCASH_STORE_RECORDS', true),
 
     /*
     |--------------------------------------------------------------------------
-    | Callback URL (POST, server-to-server, authoritative)
+    | Callback URL
     |--------------------------------------------------------------------------
     |
-    | Point the Bayarcash portal "Callback URL" at this path. Callbacks are
-    | verified by checksum and are the authoritative source of truth. A bad
-    | checksum aborts with 403.
+    | The POST server-to-server callback is the authoritative source of truth.
+    | Point your portal's "Callback URL" at this path; a bad checksum aborts
+    | with a 403 response.
     |
     */
 
@@ -61,13 +61,12 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Return URL (GET, browser redirect, best-effort)
+    | Return URL
     |--------------------------------------------------------------------------
     |
-    | Point the Bayarcash portal "Return URL" at this path. The return handler
-    | verifies the checksum when present but never aborts. "redirect" is a
-    | named route or URL to settle the browser on; when null a JSON response
-    | is returned instead.
+    | The GET browser return is best-effort: it verifies the checksum when one
+    | is present but never aborts. "redirect" is a named route or URL to send
+    | the customer to; when null the route returns a JSON response.
     |
     */
 
@@ -79,13 +78,13 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Reconciliation (scheduled)
+    | Reconciliation
     |--------------------------------------------------------------------------
     |
-    | Recovers payments whose callback/return was missed. When enabled the
-    | package schedules "bayarcash:reconcile" to run every minute. Pending
-    | rows older than "requery_after" minutes are re-queried; rows still
-    | pending after "cancel_after" minutes are auto-cancelled.
+    | Recovers payments whose callback or return was missed. When enabled the
+    | "bayarcash:reconcile" command runs every minute: pending rows older than
+    | "requery_after" minutes are re-queried, and rows still pending after
+    | "cancel_after" minutes are auto-cancelled.
     |
     */
 
@@ -100,26 +99,33 @@ return [
     | Models
     |--------------------------------------------------------------------------
     |
-    | Override these if your application extends the packaged Eloquent models.
+    | Override these to use your own models that extend the packaged Eloquent
+    | models.
     |
     */
 
     'models' => [
         'transaction' => \Bayarcash\Laravel\Models\BayarcashTransaction::class,
         'mandate'     => \Bayarcash\Laravel\Models\BayarcashMandate::class,
+        'account'     => \Bayarcash\Laravel\Models\BayarcashAccount::class,
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | Credential Resolver (multi-tenant seam)
+    | Multi-tenant
     |--------------------------------------------------------------------------
     |
-    | Optional class implementing Bayarcash\Laravel\Contracts\CredentialResolver
-    | used to resolve per-tenant credentials. Leave null to use the config
-    | credentials above.
+    | Provide a CredentialResolver to look up per-tenant credentials; leave it
+    | null to use the config credentials above. With "multi_tenant" enabled,
+    | every tenant shares the same callback/return URLs — the owning tenant is
+    | matched from a locally stored record by order_number and verified with
+    | that tenant's secret (an unmatched callback is rejected with 403). This
+    | requires "store_records".
     |
     */
 
     'credential_resolver' => null,
+
+    'multi_tenant' => env('BAYARCASH_MULTI_TENANT', false),
 
 ];

@@ -42,12 +42,13 @@ class BayarcashServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__ . '/../database/migrations' => database_path('migrations'),
             ], 'bayarcash-migrations');
+
+            $this->publishes([
+                __DIR__ . '/../database/migrations/tenant' => database_path('migrations'),
+            ], 'bayarcash-tenant-migrations');
         }
     }
 
-    /**
-     * Schedule bayarcash:reconcile to run every minute when enabled.
-     */
     protected function registerSchedule(): void
     {
         if (! config('bayarcash.reconcile.enabled', true)) {

@@ -17,9 +17,6 @@ use Illuminate\Support\Str;
  */
 trait HasBayarcashPayments
 {
-    /**
-     * Transactions owned by this model.
-     */
     public function payments(): MorphMany
     {
         return $this->morphMany(
@@ -28,9 +25,6 @@ trait HasBayarcashPayments
         );
     }
 
-    /**
-     * Direct Debit mandates owned by this model.
-     */
     public function mandates(): MorphMany
     {
         return $this->morphMany(
@@ -42,19 +36,26 @@ trait HasBayarcashPayments
     /**
      * Create a payment intent for this model and persist a pending row.
      *
+     * Pass $tenant to charge with a specific tenant's credentials (multi-tenant
+     * SaaS). When null the default .env credentials are used — identical to the
+     * single-merchant behaviour.
+     *
      * @param  array<string, mixed>  $data
      */
-    public function charge(array $data): PaymentIntentResource
+    public function charge(array $data, mixed $tenant = null): PaymentIntentResource
     {
         $manager = app('bayarcash.manager');
+        $sdk = $tenant !== null ? $manager->for($tenant) : $manager->sdk();
+        $secret = $manager->secretKey($tenant);
 
         $data['order_number'] ??= $this->generateOrderNumber();
-        $data['checksum'] ??= $manager->sdk()->createPaymentIntentChecksumValue($manager->secretKey(), $data);
+        $data['checksum'] ??= $sdk->createPaymentIntentChecksumValue($secret, $data);
 
-        $intent = $manager->sdk()->createPaymentIntent($data);
+        $intent = $sdk->createPaymentIntent($data);
 
-        if (config('bayarcash.persistence')) {
+        if (config('bayarcash.store_records')) {
             $transaction = $this->payments()->create([
+                'tenant_id'              => $tenant === null ? null : (string) $tenant,
                 'payment_intent_id'      => $intent->id ?? null,
                 'order_number'           => $data['order_number'],
                 'payment_channel'        => $this->normalizeChannel($data['payment_channel'] ?? null),
@@ -76,19 +77,25 @@ trait HasBayarcashPayments
     /**
      * Enrol this model in a Direct Debit mandate and persist a pending row.
      *
+     * Pass $tenant to enrol with a specific tenant's credentials; null uses the
+     * default .env credentials (single-merchant behaviour).
+     *
      * @param  array<string, mixed>  $data
      */
-    public function enrollDirectDebit(array $data): FpxDirectDebitApplicationResource
+    public function enrollDirectDebit(array $data, mixed $tenant = null): FpxDirectDebitApplicationResource
     {
         $manager = app('bayarcash.manager');
+        $sdk = $tenant !== null ? $manager->for($tenant) : $manager->sdk();
+        $secret = $manager->secretKey($tenant);
 
         $data['order_number'] ??= $this->generateOrderNumber();
-        $data['checksum'] ??= $manager->sdk()->createFpxDirectDebitEnrolmentChecksumValue($manager->secretKey(), $data);
+        $data['checksum'] ??= $sdk->createFpxDirectDebitEnrolmentChecksumValue($secret, $data);
 
-        $mandate = $manager->sdk()->createFpxDirectDebitEnrollment($data);
+        $mandate = $sdk->createFpxDirectDebitEnrollment($data);
 
-        if (config('bayarcash.persistence')) {
+        if (config('bayarcash.store_records')) {
             $this->mandates()->create([
+                'tenant_id'              => $tenant === null ? null : (string) $tenant,
                 'mandate_id'             => $mandate->id ?? null,
                 'order_number'           => $data['order_number'],
                 'amount'                 => $data['amount'] ?? null,
@@ -108,17 +115,11 @@ trait HasBayarcashPayments
         return $mandate;
     }
 
-    /**
-     * Generate an order number when the caller does not supply one.
-     */
     protected function generateOrderNumber(): string
     {
         return 'INV-' . Str::upper(Str::random(16));
     }
 
-    /**
-     * Normalise the payment channel to a single int for storage.
-     */
     protected function normalizeChannel(mixed $channel): ?int
     {
         if (is_array($channel)) {
