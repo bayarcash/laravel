@@ -5,13 +5,13 @@ All notable changes to `bayarcash/laravel` will be documented in this file.
 ## 1.3.0
 
 ### Fixed
-- `bayarcash:reconcile` is now multi-tenant aware. Each pending payment is re-queried, and cancelled once stale, with the credentials of the tenant stored on it instead of the `.env` ones. Each tenant's credentials are resolved once per run, and a tenant whose credentials fail no longer blocks the others. Payments without a tenant still use `.env`.
-- `bayarcash:reconcile` can now be run with `Artisan::call()` from a web request (for example an admin "Run reconcile now" button). Before, it was only registered for the command line. Scheduling is unchanged.
-- The return redirect now tells your app which payment came back. When the checksum verifies, `order_number`, `transaction_id` and `status` (taken from the recorded transaction) are added to the redirect as query parameters. Unverified returns and returns without a checksum redirect with no parameters, as before. Turn it off with `BAYARCASH_RETURN_INCLUDE_REFERENCE=false` (`return.include_reference`).
+- `bayarcash:reconcile` uses each payment's own tenant credentials instead of the `.env` ones.
+- `bayarcash:reconcile` can run from a web request through `Artisan::call()`.
+- A verified return redirect includes `order_number`, `transaction_id` and `status`. Turn this off with `BAYARCASH_RETURN_INCLUDE_REFERENCE=false`.
 
 ### Added
-- `Bayarcash::portals($tenant = null)` returns every portal on the account as a collection, following all pages. The SDK's `getPortals()` returns only the first page of 15.
-- `Bayarcash::hasPortal($portalKey, $tenant = null)` checks whether a portal key belongs to the account, stopping at the page that has it. Handy for a "test connection" button.
+- `Bayarcash::portals()` lists every portal across all pages.
+- `Bayarcash::hasPortal($portalKey)` checks whether a portal key belongs to the account.
 
 ## 1.2.0
 
