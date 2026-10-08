@@ -23,6 +23,8 @@ class ReconcileCommand extends Command
 
     protected $description = 'Reconcile pending Bayarcash payments against the gateway.';
 
+    protected array $sdks = [];
+
     public function handle(PaymentRecorder $recorder): int
     {
         if (! config('bayarcash.store_records')) {
@@ -35,6 +37,8 @@ class ReconcileCommand extends Command
         $requeryAfter = (int) config('bayarcash.reconcile.requery_after', 2);
         $cancelAfter = (int) config('bayarcash.reconcile.cancel_after', 60);
         $limit = (int) $this->option('limit');
+        // Artisan reuses this instance between calls.
+        $this->sdks = [];
 
         /** @var class-string<BayarcashTransaction> $model */
         $model = config('bayarcash.models.transaction', BayarcashTransaction::class);
@@ -46,34 +50,47 @@ class ReconcileCommand extends Command
         $this->pendingQuery($model, $requeryAfter)
             ->limit($limit)
             ->chunkById(100, function ($rows) use ($manager, $recorder, $cancelAfter, &$requeried, &$cancelled, &$processed, $limit) {
-                foreach ($rows as $row) {
-                    if ($processed >= $limit) {
-                        return false;
-                    }
-
-                    $processed++;
+                foreach ($rows->groupBy(fn ($row) => (string) $this->tenantOf($row)) as $group) {
+                    $tenant = $this->tenantOf($group->first());
 
                     try {
-                        $intent = $manager->sdk()->getPaymentIntent($row->payment_intent_id);
-                        $data = $this->intentToData($intent, $row);
-
-                        if (isset($data['status'])) {
-                            $recorder->record($data, 'requery');
-                            $requeried++;
-                        }
-                    } catch (RateLimitExceededException $e) {
-                        // Rate limited — skip this row and retry on the next tick.
-                        continue;
+                        $sdk = $this->sdkFor($manager, $tenant);
                     } catch (Throwable $e) {
-                        // Best-effort: never let one bad row abort the run.
+                        // Bad credentials: retry this tenant next run.
+                        $processed += $group->count();
+
                         continue;
                     }
 
-                    $row->refresh();
+                    foreach ($group as $row) {
+                        if ($processed >= $limit) {
+                            return false;
+                        }
 
-                    if ($this->shouldCancel($row, $cancelAfter)) {
-                        $this->cancel($manager, $recorder, $row);
-                        $cancelled++;
+                        $processed++;
+
+                        try {
+                            $intent = $sdk->getPaymentIntent($row->payment_intent_id);
+                            $data = $this->intentToData($intent, $row);
+
+                            if (isset($data['status'])) {
+                                $recorder->record($data, 'requery', $tenant);
+                                $requeried++;
+                            }
+                        } catch (RateLimitExceededException $e) {
+                            // Rate limited — skip this row and retry on the next tick.
+                            continue;
+                        } catch (Throwable $e) {
+                            // Best-effort: never let one bad row abort the run.
+                            continue;
+                        }
+
+                        $row->refresh();
+
+                        if ($this->shouldCancel($row, $cancelAfter)) {
+                            $this->cancel($manager, $recorder, $row);
+                            $cancelled++;
+                        }
                     }
                 }
 
@@ -148,12 +165,22 @@ class ReconcileCommand extends Command
             'order_number'       => $row->order_number,
             'status'             => Fpx::STATUS_CANCELLED,
             'status_description' => 'Auto-cancelled by reconciliation (intent expired).',
-        ], 'requery');
+        ], 'requery', $this->tenantOf($row));
 
         try {
-            $manager->sdk()->cancelPaymentIntent($row->payment_intent_id);
+            $this->sdkFor($manager, $this->tenantOf($row))->cancelPaymentIntent($row->payment_intent_id);
         } catch (Throwable $e) {
             // Best-effort only.
         }
+    }
+
+    protected function tenantOf(BayarcashTransaction $row): ?string
+    {
+        return $row->tenant_id === null || $row->tenant_id === '' ? null : (string) $row->tenant_id;
+    }
+
+    protected function sdkFor(mixed $manager, ?string $tenant): mixed
+    {
+        return $this->sdks[(string) $tenant] ??= $tenant === null ? $manager->sdk() : $manager->for($tenant);
     }
 }

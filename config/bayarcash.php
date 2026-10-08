@@ -67,13 +67,15 @@ return [
     | The GET browser return is best-effort: it verifies the checksum when one
     | is present but never aborts. "redirect" is a named route or URL to send
     | the customer to; when null the route returns a JSON response.
+    | "include_reference" adds the payment reference to a verified redirect.
     |
     */
 
     'return' => [
-        'enabled'  => true,
-        'path'     => env('BAYARCASH_RETURN_PATH', 'bayarcash/return'),
-        'redirect' => env('BAYARCASH_RETURN_REDIRECT'),
+        'enabled'           => true,
+        'path'              => env('BAYARCASH_RETURN_PATH', 'bayarcash/return'),
+        'redirect'          => env('BAYARCASH_RETURN_REDIRECT'),
+        'include_reference' => env('BAYARCASH_RETURN_INCLUDE_REFERENCE', true),
     ],
 
     /*

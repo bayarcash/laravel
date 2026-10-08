@@ -55,6 +55,7 @@ BAYARCASH_STORE_RECORDS=true
 BAYARCASH_CALLBACK_PATH=bayarcash/callback
 BAYARCASH_RETURN_PATH=bayarcash/return
 BAYARCASH_RETURN_REDIRECT=payments.thank-you   # named route or absolute URL
+BAYARCASH_RETURN_INCLUDE_REFERENCE=true        # add the payment reference to the redirect
 BAYARCASH_RECONCILE=true
 ```
 
@@ -137,6 +138,26 @@ Set `BAYARCASH_RETURN_REDIRECT` to a named route or URL to control where the
 customer lands after payment. When it is null, the return route responds with
 JSON.
 
+When the return's checksum verifies, the redirect carries the payment reference
+as query parameters, read from the recorded transaction:
+
+| Parameter | Value |
+|---|---|
+| `order_number` | Your order number |
+| `transaction_id` | The Bayarcash transaction id, when known |
+| `status` | The recorded status code (`3` = successful, `2` = failed, ...) |
+
+```
+https://your-app.test/payments/thank-you?order_number=INV-123&transaction_id=trx_abc&status=3
+```
+
+A named route receives them as route parameters, so a route such as
+`payments/{order_number}` is filled in and anything else goes on the query string.
+An unverified return, or one without a checksum, redirects with no parameters.
+Treat them as a pointer to the payment, not as proof of payment: look the order up
+and trust its stored status (the callback is authoritative). Set
+`BAYARCASH_RETURN_INCLUDE_REFERENCE=false` to redirect without them.
+
 ### 5. Listen for events
 
 ```php
@@ -185,6 +206,22 @@ You can also run it manually:
 ```bash
 php artisan bayarcash:reconcile
 ```
+
+or from your own code, including a web request such as an admin "Run reconcile
+now" button:
+
+```php
+use Illuminate\Support\Facades\Artisan;
+
+Artisan::call('bayarcash:reconcile');
+$summary = Artisan::output(); // "Bayarcash reconcile: 2 re-queried, 1 auto-cancelled."
+```
+
+Reconciliation is **multi-tenant aware**: each pending payment is re-queried, and
+auto-cancelled once stale, with the credentials of the tenant stored on it
+(`tenant_id`), resolved through your `CredentialResolver`. Each tenant's
+credentials are resolved once per run, and payments without a tenant use the
+`.env` credentials.
 
 Reconciliation requires stored records.
 
@@ -311,6 +348,18 @@ secret, and verifies the checksum — rejecting with **`403`** (fail closed) whe
 record matches. This lookup is why multi-tenant mode requires
 `BAYARCASH_STORE_RECORDS=true`.
 
+### 5. Reconciliation and portals per tenant
+
+[`bayarcash:reconcile`](#reconciliation) re-queries and cancels each payment with
+its own tenant's credentials — nothing extra to configure. To check a tenant's
+credentials, pass the tenant to the portal helpers:
+
+```php
+use Bayarcash\Laravel\Facades\Bayarcash;
+
+Bayarcash::hasPortal($portalKey, $tenantId); // true when the token owns that portal
+```
+
 ## The facade
 
 For direct, lower-level access to the SDK:
@@ -324,6 +373,25 @@ $intent       = Bayarcash::sdk()->getPaymentIntent('payment_intent_id');
 ```
 
 The facade proxies to the underlying `Bayarcash\Bayarcash` client (pinned to API v3).
+
+### Portals
+
+The SDK's `getPortals()` returns only the first page (15 portals). To list every
+portal on an account, use the package helpers, which follow all pages:
+
+```php
+use Bayarcash\Laravel\Facades\Bayarcash;
+
+$portals = Bayarcash::portals();              // Collection of PortalResource, every page
+$portals = Bayarcash::portals($tenantId);     // with a tenant's credentials
+
+Bayarcash::hasPortal('your_portal_key');            // bool, stops at the page that has it
+Bayarcash::hasPortal('your_portal_key', $tenantId);
+```
+
+`hasPortal()` suits a "test connection" button: `false` means the token works but
+does not own that portal, while a rejected token or an unreachable gateway throws
+(see [Error handling](#error-handling)).
 
 ## Error handling
 

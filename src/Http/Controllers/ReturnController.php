@@ -8,6 +8,7 @@ use Bayarcash\Laravel\PaymentRecorder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Route;
 
 /**
@@ -31,7 +32,11 @@ class ReturnController
         $redirect = config('bayarcash.return.redirect');
 
         if ($redirect) {
-            $url = Route::has($redirect) ? route($redirect) : $redirect;
+            $reference = $transaction && config('bayarcash.return.include_reference', true)
+                ? $this->reference($transaction)
+                : [];
+
+            $url = Route::has($redirect) ? route($redirect, $reference) : $this->withQuery($redirect, $reference);
 
             $response = redirect()->to($url);
 
@@ -82,5 +87,27 @@ class ReturnController
         }
 
         return $this->recorder->record($data, 'return', $tenantId);
+    }
+
+    // Use the stored row: the query may be stale.
+    protected function reference(BayarcashTransaction $transaction): array
+    {
+        return array_filter([
+            'order_number'   => $transaction->order_number,
+            'transaction_id' => $transaction->transaction_id,
+            'status'         => $transaction->status,
+        ], fn ($value) => $value !== null && $value !== '');
+    }
+
+    protected function withQuery(string $url, array $query): string
+    {
+        if ($query === []) {
+            return $url;
+        }
+
+        [$url, $fragment] = array_pad(explode('#', $url, 2), 2, null);
+
+        return $url . (str_contains($url, '?') ? '&' : '?') . Arr::query($query)
+            . ($fragment === null ? '' : '#' . $fragment);
     }
 }

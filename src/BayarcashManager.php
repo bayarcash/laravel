@@ -4,6 +4,9 @@ namespace Bayarcash\Laravel;
 
 use Bayarcash\Bayarcash;
 use Bayarcash\Laravel\Contracts\CredentialResolver;
+use Bayarcash\Resources\PortalResource;
+use Illuminate\Support\Collection;
+use Illuminate\Support\LazyCollection;
 
 /**
  * Builds and caches configured Bayarcash SDK instances.
@@ -49,6 +52,36 @@ class BayarcashManager
     public function secretKey(mixed $tenant = null): string
     {
         return (string) ($this->credentials($tenant)['secret_key'] ?? '');
+    }
+
+    public function portals(mixed $tenant = null): Collection
+    {
+        return $this->lazyPortals($tenant)->collect();
+    }
+
+    public function hasPortal(string $portalKey, mixed $tenant = null): bool
+    {
+        return $this->lazyPortals($tenant)->contains(fn (PortalResource $portal) => $portal->portalKey === $portalKey);
+    }
+
+    // getPortals() stops at page 1, so walk every page.
+    protected function lazyPortals(mixed $tenant): LazyCollection
+    {
+        return LazyCollection::make(function () use ($tenant) {
+            $sdk = $this->for($tenant);
+            $page = 1;
+
+            do {
+                $response = $sdk->get('portals?page=' . $page);
+                $items = is_array($response) ? ($response['data'] ?? $response) : [];
+
+                foreach ($items as $item) {
+                    yield new PortalResource($item, $sdk);
+                }
+
+                $lastPage = (int) ($response['meta']['last_page'] ?? $page);
+            } while ($items !== [] && $page++ < $lastPage);
+        });
     }
 
     /**

@@ -32,9 +32,9 @@ class BayarcashServiceProvider extends ServiceProvider
 
         $this->registerSchedule();
 
-        if ($this->app->runningInConsole()) {
-            $this->commands([ReconcileCommand::class]);
+        $this->commands([ReconcileCommand::class]);
 
+        if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__ . '/../config/bayarcash.php' => config_path('bayarcash.php'),
             ], 'bayarcash-config');
