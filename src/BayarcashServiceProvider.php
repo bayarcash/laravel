@@ -3,6 +3,7 @@
 namespace Bayarcash\Laravel;
 
 use Bayarcash\Laravel\Console\ReconcileCommand;
+use Bayarcash\Laravel\Console\SyncMandatesCommand;
 use Bayarcash\Laravel\Contracts\CredentialResolver;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
@@ -32,7 +33,7 @@ class BayarcashServiceProvider extends ServiceProvider
 
         $this->registerSchedule();
 
-        $this->commands([ReconcileCommand::class]);
+        $this->commands([ReconcileCommand::class, SyncMandatesCommand::class]);
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
@@ -51,10 +52,6 @@ class BayarcashServiceProvider extends ServiceProvider
 
     protected function registerSchedule(): void
     {
-        if (! config('bayarcash.reconcile.enabled', true)) {
-            return;
-        }
-
         $this->app->booted(function () {
             // No-op in the test environment so scheduling never fires there.
             if ($this->app->runningUnitTests()) {
@@ -62,9 +59,18 @@ class BayarcashServiceProvider extends ServiceProvider
             }
 
             $schedule = $this->app->make(Schedule::class);
-            $schedule->command('bayarcash:reconcile')
-                ->everyMinute()
-                ->withoutOverlapping();
+
+            if (config('bayarcash.reconcile.enabled', true)) {
+                $schedule->command('bayarcash:reconcile')
+                    ->everyMinute()
+                    ->withoutOverlapping();
+            }
+
+            if (config('bayarcash.mandate_sync.enabled', true)) {
+                $schedule->command('bayarcash:sync-mandates')
+                    ->twiceDaily(3, 15)
+                    ->withoutOverlapping();
+            }
         });
     }
 }

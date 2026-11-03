@@ -2,6 +2,7 @@
 
 namespace Bayarcash\Laravel\Concerns;
 
+use Bayarcash\Laravel\Http\CallbackType;
 use Bayarcash\Laravel\Models\BayarcashMandate;
 use Bayarcash\Laravel\Models\BayarcashTransaction;
 
@@ -20,9 +21,10 @@ trait ResolvesTenant
      */
     protected function resolveTenantFromPayload(array $data): string|null|false
     {
-        $recordType = $data['record_type'] ?? 'transaction';
+        $forMandate = in_array(CallbackType::of($data), ['bank_approval', 'authorization'], true)
+            || ! empty($data['mandate_id']);
 
-        $record = in_array($recordType, ['bank_approval', 'authorization'], true)
+        $record = $forMandate
             ? $this->findMandateRecord($data)
             : $this->findTransactionRecord($data);
 

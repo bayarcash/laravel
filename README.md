@@ -125,6 +125,62 @@ $mandate = $order->enrollDirectDebit([
 return redirect()->away($mandate->url);
 ```
 
+Bayarcash sends every mandate callback to the mandate's `return_url`, so the
+package sets it to the callback route unless you pass your own. It also cleans
+`payer_name` and `payer_telephone_number` the way Bayarcash does before signing.
+
+The mandate's status follows its callbacks:
+
+| Callback | Mandate status | Event |
+|---|---|---|
+| Bank verification (RM1) paid | `STATUS_WAITING_APPROVAL` | `MandateAuthorized` |
+| Bank approves | `STATUS_ACTIVE` | `MandateApproved` |
+| Bank rejects the enrolment | `STATUS_REJECTED` or `STATUS_ERROR` | `MandateRejected` |
+| Termination approved, including one the payer starts at their bank | `STATUS_TERMINATED` | `MandateTerminated` |
+
+Each deduction Bayarcash makes on the mandate arrives at the same callback route:
+
+- It is recorded as a payment: a `BayarcashTransaction` with `payment_channel` 3 (FPX Direct Debit).
+- It takes the mandate's owner and order number, and stores its `mandate_id` and `cycle`.
+- It fires `PaymentSucceeded` or `PaymentFailed` like any other payment.
+- Check `isDirectDebit()` when a listener should treat it differently.
+- Its `paid_at` is the date Bayarcash took the deduction, not when the callback arrived.
+- A cancelled deduction (Bayarcash deleted the billing file) is recorded but fires no event.
+
+```php
+$order->payments()->directDebit()->get();   // every deduction for this owner
+$mandate->payments()->successful()->get();  // deductions taken on one mandate
+$transaction->mandate;                      // the BayarcashMandate it came from
+```
+
+To stop a mandate, cancel it:
+
+```php
+use Bayarcash\Laravel\Exceptions\MandateNotCancellable;
+
+try {
+    $mandate->cancel(); // deactivated on Bayarcash, fires MandateTerminated
+} catch (MandateNotCancellable $e) {
+    // Still waiting for the bank: try again once it is active.
+}
+```
+
+- An active mandate is deactivated on Bayarcash and becomes `STATUS_INACTIVE`.
+- One Bayarcash already stopped just takes that status.
+- One still waiting for the bank throws and stays as it is, because Bayarcash may still deduct from it.
+
+#### Missed callbacks
+
+Bayarcash drops a mandate callback after five failed attempts. The
+`bayarcash:sync-mandates` command, scheduled twice a day, asks Bayarcash directly:
+
+- Enrolments still waiting for the bank (between an hour and 30 days old) are approved or rejected.
+- A few active mandates per run are re-checked, and ones the payer stopped at their bank are terminated.
+- Deductions from the last 14 days that never arrived are recorded, through the same code as the callback.
+
+Only mandates stored by this app are touched. Tune it under `mandate_sync` in
+`config/bayarcash.php`, or turn it off with `BAYARCASH_MANDATE_SYNC=false`.
+
 ### 4. Handle results
 
 The package registers two routes automatically — you do not write controllers:
@@ -174,11 +230,13 @@ Available events:
 | Event | Payload |
 |---|---|
 | `PaymentCreated` | `->transaction` |
-| `PaymentSucceeded` | `->transaction` |
-| `PaymentFailed` | `->transaction` |
-| `PaymentCancelled` | `->transaction` |
+| `PaymentSucceeded` | `->transaction` (also fires for each Direct Debit deduction) |
+| `PaymentFailed` | `->transaction` (also fires for each Direct Debit deduction) |
+| `PaymentCancelled` | `->transaction` (also fires for an abandoned payment, status `5`) |
 | `MandateAuthorized` | `->mandate` |
 | `MandateApproved` | `->mandate` |
+| `MandateRejected` | `->mandate` |
+| `MandateTerminated` | `->mandate` |
 | `WebhookReceived` | `->recordType`, `->payload` |
 
 ### 6. Query stored records
@@ -232,8 +290,8 @@ payment and mandate in your database.
 
 ### `BAYARCASH_STORE_RECORDS=true` (default) — stateful
 
-Transactions and mandates are recorded in the `bayarcash_transactions` and
-`bayarcash_mandates` tables. This is what you get:
+Transactions (including Direct Debit deductions) and mandates are recorded in the
+`bayarcash_transactions` and `bayarcash_mandates` tables. This is what you get:
 
 | Capability | What happens |
 |---|---|
@@ -376,16 +434,13 @@ The facade proxies to the underlying `Bayarcash\Bayarcash` client (pinned to API
 
 ### Portals
 
-The SDK's `getPortals()` returns only the first page (15 portals). To list every
-portal on an account, use the package helpers, which follow all pages:
-
 ```php
 use Bayarcash\Laravel\Facades\Bayarcash;
 
 $portals = Bayarcash::portals();              // Collection of PortalResource, every page
 $portals = Bayarcash::portals($tenantId);     // with a tenant's credentials
 
-Bayarcash::hasPortal('your_portal_key');            // bool, stops at the page that has it
+Bayarcash::hasPortal('your_portal_key');            // bool, one lookup by portal key
 Bayarcash::hasPortal('your_portal_key', $tenantId);
 ```
 

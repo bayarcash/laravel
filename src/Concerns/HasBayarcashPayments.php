@@ -10,6 +10,7 @@ use Bayarcash\Laravel\Models\BayarcashTransaction;
 use Bayarcash\Resources\FpxDirectDebitApplicationResource;
 use Bayarcash\Resources\PaymentIntentResource;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 
 /**
@@ -89,6 +90,13 @@ trait HasBayarcashPayments
         $secret = $manager->secretKey($tenant);
 
         $data['order_number'] ??= $this->generateOrderNumber();
+
+        // Bayarcash sends every mandate callback to return_url, and none when it is empty.
+        if (Route::has('bayarcash.callback')) {
+            $data['return_url'] ??= route('bayarcash.callback');
+        }
+
+        $data = $this->cleanEnrolmentFields($data);
         $data['checksum'] ??= $sdk->createFpxDirectDebitEnrolmentChecksumValue($secret, $data);
 
         $mandate = $sdk->createFpxDirectDebitEnrollment($data);
@@ -113,6 +121,21 @@ trait HasBayarcashPayments
         }
 
         return $mandate;
+    }
+
+    // The mandate API cleans these before verifying the checksum, so sign the cleaned values.
+    protected function cleanEnrolmentFields(array $data): array
+    {
+        if (isset($data['payer_name'])) {
+            $data['payer_name'] = preg_replace('/[^a-zA-Z0-9_ -]/', '', (string) $data['payer_name']);
+        }
+
+        if (isset($data['payer_telephone_number'])) {
+            $phone = preg_replace('/\D/', '', (string) $data['payer_telephone_number']);
+            $data['payer_telephone_number'] = str_starts_with($phone, '60') ? substr($phone, 1) : $phone;
+        }
+
+        return $data;
     }
 
     protected function generateOrderNumber(): string

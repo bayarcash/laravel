@@ -20,6 +20,15 @@ class PortalsTest extends TestCase
             $page = (int) ($query['page'] ?? 1);
             $lastPage = (int) ceil($total / $perPage);
 
+            if (isset($query['portal_key'])) {
+                $number = (int) substr($query['portal_key'], 4);
+                $data = str_starts_with($query['portal_key'], 'key-') && $number >= 1 && $number <= $total
+                    ? [['id' => 'prt_' . $number, 'portal_key' => $query['portal_key']]]
+                    : [];
+
+                return new Response(200, [], json_encode(['data' => $data, 'meta' => ['total' => count($data)]]));
+            }
+
             $data = [];
             for ($i = ($page - 1) * $perPage + 1; $i <= min($page * $perPage, $total); $i++) {
                 $data[] = ['id' => 'prt_' . $i, 'portal_key' => 'key-' . $i, 'portal_name' => 'Portal ' . $i];
@@ -74,21 +83,31 @@ class PortalsTest extends TestCase
         $this->assertCount(1, $fake->requests);
     }
 
-    public function test_has_portal_finds_a_key_beyond_the_first_page_and_stops_there(): void
+    public function test_has_portal_finds_a_key_beyond_the_first_page_in_one_request(): void
     {
         $fake = HttpFakeManager::install($this->paginatedGateway(total: 50));
 
         $this->assertTrue(Bayarcash::hasPortal('key-20'));
-        $this->assertSame([1, 2], $this->pagesRequested($fake));
+        $this->assertCount(1, $fake->requests);
+        $this->assertSame('portal_key=key-20', $fake->requests[0]->getUri()->getQuery());
     }
 
-    public function test_has_portal_is_false_after_checking_every_page(): void
+    public function test_has_portal_is_false_for_a_key_the_account_does_not_own(): void
     {
         $fake = HttpFakeManager::install($this->paginatedGateway(), new TenantResolver());
 
         $this->assertFalse(Bayarcash::hasPortal('missing-key', 't1'));
-        $this->assertSame([1, 2, 3], $this->pagesRequested($fake));
-        $this->assertSame(['Bearer tok-t1'], array_values(array_unique($fake->tokens())));
+        $this->assertCount(1, $fake->requests);
+        $this->assertSame(['Bearer tok-t1'], $fake->tokens());
+    }
+
+    public function test_has_portal_requires_an_exact_key_match(): void
+    {
+        HttpFakeManager::install(fn () => new Response(200, [], json_encode([
+            'data' => [['id' => 'prt_1', 'portal_key' => 'key-1-other']],
+        ])));
+
+        $this->assertFalse(Bayarcash::hasPortal('key-1'));
     }
 
     public function test_has_portal_lets_a_rejected_token_throw(): void

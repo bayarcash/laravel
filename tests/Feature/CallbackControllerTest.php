@@ -3,6 +3,7 @@
 namespace Bayarcash\Laravel\Tests\Feature;
 
 use Bayarcash\Bayarcash;
+use Bayarcash\FpxDirectDebit;
 use Bayarcash\Laravel\Events\MandateApproved;
 use Bayarcash\Laravel\Events\MandateAuthorized;
 use Bayarcash\Laravel\Events\PaymentSucceeded;
@@ -101,7 +102,7 @@ class CallbackControllerTest extends TestCase
         $this->postJson('bayarcash/callback', $payload)->assertOk();
 
         $this->assertDatabaseHas('bayarcash_mandates', [
-            'mandate_id' => 'mdt_1', 'application_type' => '01', 'status' => 3,
+            'mandate_id' => 'mdt_1', 'application_type' => '01', 'status' => FpxDirectDebit::STATUS_WAITING_APPROVAL,
         ]);
         Event::assertDispatched(MandateAuthorized::class);
     }
@@ -111,7 +112,7 @@ class CallbackControllerTest extends TestCase
         Event::fake([MandateApproved::class]);
 
         $payload = $this->sign([
-            'record_type' => 'bank_approval', 'approval_date' => '2026-01-01', 'approval_status' => 'approved',
+            'record_type' => 'bank_approval', 'approval_date' => '2026-01-01', 'approval_status' => 5,
             'mandate_id' => 'mdt_2', 'mandate_reference_number' => 'MREF', 'order_number' => 'INV-2',
             'payer_bank_code_hashed' => 'h', 'payer_bank_code' => 'MB2U0227', 'payer_bank_account_no' => '123',
             'application_type' => '01',
@@ -119,7 +120,9 @@ class CallbackControllerTest extends TestCase
 
         $this->postJson('bayarcash/callback', $payload)->assertOk();
 
-        $this->assertDatabaseHas('bayarcash_mandates', ['mandate_id' => 'mdt_2', 'mandate_reference_number' => 'MREF']);
+        $this->assertDatabaseHas('bayarcash_mandates', [
+            'mandate_id' => 'mdt_2', 'mandate_reference_number' => 'MREF', 'status' => FpxDirectDebit::STATUS_ACTIVE,
+        ]);
         Event::assertDispatched(MandateApproved::class);
     }
 

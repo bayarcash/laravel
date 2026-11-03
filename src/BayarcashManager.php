@@ -4,9 +4,7 @@ namespace Bayarcash\Laravel;
 
 use Bayarcash\Bayarcash;
 use Bayarcash\Laravel\Contracts\CredentialResolver;
-use Bayarcash\Resources\PortalResource;
 use Illuminate\Support\Collection;
-use Illuminate\Support\LazyCollection;
 
 /**
  * Builds and caches configured Bayarcash SDK instances.
@@ -56,32 +54,15 @@ class BayarcashManager
 
     public function portals(mixed $tenant = null): Collection
     {
-        return $this->lazyPortals($tenant)->collect();
+        return collect($this->for($tenant)->getPortals());
     }
 
     public function hasPortal(string $portalKey, mixed $tenant = null): bool
     {
-        return $this->lazyPortals($tenant)->contains(fn (PortalResource $portal) => $portal->portalKey === $portalKey);
-    }
+        $response = $this->for($tenant)->get('portals?' . http_build_query(['portal_key' => $portalKey]));
+        $portals = is_array($response) ? ($response['data'] ?? []) : [];
 
-    // getPortals() stops at page 1, so walk every page.
-    protected function lazyPortals(mixed $tenant): LazyCollection
-    {
-        return LazyCollection::make(function () use ($tenant) {
-            $sdk = $this->for($tenant);
-            $page = 1;
-
-            do {
-                $response = $sdk->get('portals?page=' . $page);
-                $items = is_array($response) ? ($response['data'] ?? $response) : [];
-
-                foreach ($items as $item) {
-                    yield new PortalResource($item, $sdk);
-                }
-
-                $lastPage = (int) ($response['meta']['last_page'] ?? $page);
-            } while ($items !== [] && $page++ < $lastPage);
-        });
+        return collect($portals)->contains(fn ($portal) => ($portal['portal_key'] ?? null) === $portalKey);
     }
 
     /**

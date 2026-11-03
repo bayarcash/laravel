@@ -85,6 +85,50 @@ class PaymentRecorderTest extends TestCase
         Event::assertNotDispatched(PaymentCancelled::class);
     }
 
+    public function test_abandoned_payment_fires_cancelled_and_stays_terminal(): void
+    {
+        BayarcashTransaction::create([
+            'order_number' => 'INV-A', 'transaction_id' => 'trx_a',
+            'status' => Fpx::STATUS_PENDING, 'amount' => '10.00',
+        ]);
+
+        Event::fake([PaymentCancelled::class]);
+
+        $this->recorder()->record([
+            'transaction_id' => 'trx_a', 'order_number' => 'INV-A', 'status' => (string) Fpx::STATUS_ABANDONED,
+        ], 'callback');
+        $result = $this->recorder()->record([
+            'transaction_id' => 'trx_a', 'order_number' => 'INV-A', 'status' => (string) Fpx::STATUS_PENDING,
+        ], 'requery');
+
+        $this->assertSame(Fpx::STATUS_ABANDONED, $result->status);
+        $this->assertSame('Abandoned', $result->statusLabel());
+        Event::assertDispatchedTimes(PaymentCancelled::class, 1);
+    }
+
+    public function test_channel_comes_from_the_callback_but_never_overwrites_a_known_one(): void
+    {
+        $chosenOnGateway = BayarcashTransaction::create(['order_number' => 'INV-C1', 'amount' => '10.00']);
+        $chosenAtCharge = BayarcashTransaction::create(['order_number' => 'INV-C2', 'amount' => '10.00', 'payment_channel' => 1]);
+
+        $this->recorder()->record(['order_number' => 'INV-C1', 'status' => '3', 'payment_gateway_id' => '5'], 'callback');
+        $this->recorder()->record(['order_number' => 'INV-C2', 'status' => '3', 'payment_gateway_id' => '5'], 'callback');
+
+        $this->assertSame(5, $chosenOnGateway->fresh()->payment_channel);
+        $this->assertSame(1, $chosenAtCharge->fresh()->payment_channel);
+    }
+
+    public function test_redelivered_success_keeps_the_first_paid_at(): void
+    {
+        $this->recorder()->record(['transaction_id' => 'trx_p', 'order_number' => 'INV-P', 'status' => '3'], 'callback');
+        $paidAt = BayarcashTransaction::sole()->paid_at;
+
+        $this->travel(10)->minutes();
+        $this->recorder()->record(['transaction_id' => 'trx_p', 'order_number' => 'INV-P', 'status' => '3'], 'callback');
+
+        $this->assertTrue(BayarcashTransaction::sole()->paid_at->eq($paidAt));
+    }
+
     public function test_raw_callback_is_stored_only_via_callback(): void
     {
         $viaCallback = $this->recorder()->record([

@@ -35,4 +35,9 @@ class MigrationsTest extends TestCase
             'created_at', 'updated_at',
         ]));
     }
+
+    public function test_transactions_table_has_direct_debit_columns(): void
+    {
+        $this->assertTrue(Schema::hasColumns('bayarcash_transactions', ['mandate_id', 'cycle']));
+    }
 }

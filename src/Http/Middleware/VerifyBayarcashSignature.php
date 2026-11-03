@@ -3,6 +3,7 @@
 namespace Bayarcash\Laravel\Http\Middleware;
 
 use Bayarcash\Laravel\Concerns\ResolvesTenant;
+use Bayarcash\Laravel\Http\CallbackType;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -18,7 +19,7 @@ class VerifyBayarcashSignature
     use ResolvesTenant;
 
     /**
-     * Map of record_type => SDK verifier method.
+     * Map of callback type (see CallbackType::of()) => SDK verifier method.
      *
      * @var array<string, string>
      */
@@ -27,6 +28,7 @@ class VerifyBayarcashSignature
         'transaction'     => 'verifyTransactionCallbackData',
         'bank_approval'   => 'verifyDirectDebitBankApprovalCallbackData',
         'authorization'   => 'verifyDirectDebitAuthorizationCallbackData',
+        'deduction'       => 'verifyDirectDebitTransactionCallbackData',
     ];
 
     public function handle(Request $request, Closure $next): Response
@@ -34,8 +36,6 @@ class VerifyBayarcashSignature
         $manager = app('bayarcash.manager');
 
         $data = $request->all();
-        $recordType = $data['record_type'] ?? 'transaction';
-        $verifier = self::VERIFIERS[$recordType] ?? self::VERIFIERS['transaction'];
 
         if (config('bayarcash.multi_tenant')) {
             $tenantId = $this->resolveTenantFromPayload($data);
@@ -46,9 +46,7 @@ class VerifyBayarcashSignature
                 abort(403, 'Unknown Bayarcash callback: no matching record.');
             }
 
-            // The verifiers are pure — they only hash the payload with the given
-            // secret — so the default SDK instance can verify a tenant payload.
-            if (! $manager->sdk()->{$verifier}($data, $manager->secretKey($tenantId))) {
+            if (! $this->verify($data, $manager->secretKey($tenantId))) {
                 abort(403, 'Invalid Bayarcash checksum.');
             }
 
@@ -57,10 +55,31 @@ class VerifyBayarcashSignature
             return $next($request);
         }
 
-        if (! $manager->sdk()->{$verifier}($data, $manager->secretKey())) {
+        if (! $this->verify($data, $manager->secretKey())) {
             abort(403, 'Invalid Bayarcash checksum.');
         }
 
         return $next($request);
+    }
+
+    protected function verify(array $data, string $secret): bool
+    {
+        // The verifiers only hash the payload, so the default SDK can check any tenant's secret.
+        $sdk = app('bayarcash.manager')->sdk();
+        $verifier = self::VERIFIERS[CallbackType::of($data)] ?? null;
+
+        if ($verifier !== null) {
+            return (bool) $sdk->{$verifier}($data, $secret);
+        }
+
+        // Record types without an SDK verifier (e.g. incoming_transaction) are signed over every field.
+        $fields = $data;
+        unset($fields['checksum']);
+
+        if (array_filter($fields, 'is_array') !== []) {
+            return false;
+        }
+
+        return hash_equals($sdk->createChecksumValue($secret, $fields), (string) ($data['checksum'] ?? ''));
     }
 }

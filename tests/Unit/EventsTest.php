@@ -4,6 +4,8 @@ namespace Bayarcash\Laravel\Tests\Unit;
 
 use Bayarcash\Laravel\Events\MandateApproved;
 use Bayarcash\Laravel\Events\MandateAuthorized;
+use Bayarcash\Laravel\Events\MandateRejected;
+use Bayarcash\Laravel\Events\MandateTerminated;
 use Bayarcash\Laravel\Events\PaymentCancelled;
 use Bayarcash\Laravel\Events\PaymentCreated;
 use Bayarcash\Laravel\Events\PaymentFailed;
@@ -31,6 +33,8 @@ class EventsTest extends TestCase
 
         $this->assertSame($mandate, (new MandateAuthorized($mandate))->mandate);
         $this->assertSame($mandate, (new MandateApproved($mandate))->mandate);
+        $this->assertSame($mandate, (new MandateRejected($mandate))->mandate);
+        $this->assertSame($mandate, (new MandateTerminated($mandate))->mandate);
     }
 
     public function test_webhook_received_carries_type_and_payload(): void

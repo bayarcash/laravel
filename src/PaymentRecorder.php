@@ -2,11 +2,16 @@
 
 namespace Bayarcash\Laravel;
 
+use Bayarcash\Bayarcash;
 use Bayarcash\Fpx;
 use Bayarcash\Laravel\Events\PaymentCancelled;
 use Bayarcash\Laravel\Events\PaymentFailed;
 use Bayarcash\Laravel\Events\PaymentSucceeded;
+use Bayarcash\Laravel\Http\CallbackType;
+use Bayarcash\Laravel\Models\BayarcashMandate;
 use Bayarcash\Laravel\Models\BayarcashTransaction;
+use Illuminate\Support\Carbon;
+use Throwable;
 
 /**
  * Shared upsert, guards and event dispatch for transaction results. The callback
@@ -27,6 +32,14 @@ class PaymentRecorder
 
         $status = isset($data['status']) && $data['status'] !== null ? (int) $data['status'] : null;
         $attributes = $this->attributes($data, $status, $via);
+
+        if (CallbackType::of($data) === 'deduction') {
+            $attributes += $this->deductionDefaults($data);
+
+            if (isset($attributes['paid_at'])) {
+                $attributes['paid_at'] = $this->deductedAt($data) ?? $attributes['paid_at'];
+            }
+        }
 
         if ($tenantId !== null) {
             $attributes['tenant_id'] = $tenantId;
@@ -50,6 +63,13 @@ class PaymentRecorder
                 return $transaction;
             }
 
+            // A re-delivered callback must not move paid_at or overwrite a known channel.
+            foreach (['paid_at', 'payment_channel'] as $kept) {
+                if ($transaction->{$kept} !== null) {
+                    unset($attributes[$kept]);
+                }
+            }
+
             $transaction->fill($attributes)->save();
         } else {
             $transaction = $model::create($attributes);
@@ -68,6 +88,11 @@ class PaymentRecorder
      */
     protected function match(string $model, array $data): ?BayarcashTransaction
     {
+        // A mandate's deductions share one order number, so never match them on it.
+        if (CallbackType::of($data) === 'deduction') {
+            return $this->matchDeduction($model, $data);
+        }
+
         if (! empty($data['payment_intent_id'])) {
             $pending = $model::query()
                 ->where('payment_intent_id', $data['payment_intent_id'])
@@ -98,6 +123,27 @@ class PaymentRecorder
         return null;
     }
 
+    protected function matchDeduction(string $model, array $data): ?BayarcashTransaction
+    {
+        if (! empty($data['transaction_id'])) {
+            $byTransaction = $model::query()->where('transaction_id', $data['transaction_id'])->first();
+
+            if ($byTransaction) {
+                return $byTransaction;
+            }
+        }
+
+        if (empty($data['reference_number'])) {
+            return null;
+        }
+
+        // The callback and the sync's deduction list always share the reference.
+        return $model::query()
+            ->where('mandate_id', $data['mandate_id'])
+            ->where('exchange_reference_number', $data['reference_number'])
+            ->first();
+    }
+
     /**
      * Build the attribute set to persist, dropping absent values so an update
      * never nulls out data already on the row.
@@ -110,6 +156,11 @@ class PaymentRecorder
         $attributes = array_filter([
             'transaction_id'            => $data['transaction_id'] ?? null,
             'payment_intent_id'         => $data['payment_intent_id'] ?? null,
+            'mandate_id'                => $data['mandate_id'] ?? null,
+            'cycle'                     => $data['cycle'] ?? null,
+            'payment_channel'           => isset($data['payment_gateway_id']) && $data['payment_gateway_id'] !== ''
+                ? (int) $data['payment_gateway_id']
+                : null,
             'exchange_reference_number' => $data['exchange_reference_number'] ?? null,
             'order_number'              => $data['order_number'] ?? null,
             'currency'                  => $data['currency'] ?? null,
@@ -138,6 +189,48 @@ class PaymentRecorder
     }
 
     /**
+     * Fill a deduction's gaps from its mandate: the payload carries no owner,
+     * order number or payer details.
+     *
+     * @return array<string, mixed>
+     */
+    protected function deductionDefaults(array $data): array
+    {
+        /** @var class-string<BayarcashMandate> $model */
+        $model = config('bayarcash.models.mandate', BayarcashMandate::class);
+
+        $mandate = config('bayarcash.store_records')
+            ? $model::query()->where('mandate_id', $data['mandate_id'])->first()
+            : null;
+
+        return array_filter([
+            'payment_channel'           => Bayarcash::FPX_DIRECT_DEBIT,
+            'exchange_reference_number' => $data['reference_number'] ?? null,
+            'order_number'              => $mandate?->order_number ?? $data['mandate_reference_number'] ?? $data['mandate_id'],
+            'owner_type'                => $mandate?->owner_type,
+            'owner_id'                  => $mandate?->owner_id,
+            'currency'                  => $mandate?->currency,
+            'payer_name'                => $mandate?->payer_name,
+            'payer_email'               => $mandate?->payer_email,
+            'payer_telephone_number'    => $mandate?->payer_telephone_number,
+        ], fn ($value) => $value !== null);
+    }
+
+    // Bayarcash sends the deduction date in Malaysia time; it can be days before the callback.
+    protected function deductedAt(array $data): ?Carbon
+    {
+        if (empty($data['datetime'])) {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($data['datetime'], 'Asia/Kuala_Lumpur')->setTimezone(config('app.timezone'));
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /**
      * Guard: never downgrade a successful row, and ignore a new/pending
      * incoming status once the row is already terminal.
      */
@@ -155,7 +248,7 @@ class PaymentRecorder
             return true;
         }
 
-        $terminal = [Fpx::STATUS_SUCCESS, Fpx::STATUS_FAILED, Fpx::STATUS_CANCELLED];
+        $terminal = [Fpx::STATUS_SUCCESS, Fpx::STATUS_FAILED, Fpx::STATUS_CANCELLED, Fpx::STATUS_ABANDONED];
         $transient = [Fpx::STATUS_NEW, Fpx::STATUS_PENDING];
 
         if (in_array($previous, $terminal, true) && in_array($incoming, $transient, true)) {
@@ -174,10 +267,16 @@ class PaymentRecorder
             return;
         }
 
+        // A cancelled deduction is a deleted billing file, not a payer cancellation.
+        if ($incoming === Fpx::STATUS_CANCELLED && $transaction->isDirectDebit()) {
+            return;
+        }
+
         match ($incoming) {
             Fpx::STATUS_SUCCESS   => PaymentSucceeded::dispatch($transaction),
             Fpx::STATUS_FAILED    => PaymentFailed::dispatch($transaction),
-            Fpx::STATUS_CANCELLED => PaymentCancelled::dispatch($transaction),
+            Fpx::STATUS_CANCELLED,
+            Fpx::STATUS_ABANDONED => PaymentCancelled::dispatch($transaction),
             default               => null,
         };
     }

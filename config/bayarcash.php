@@ -98,6 +98,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Direct Debit sync
+    |--------------------------------------------------------------------------
+    |
+    | Recovers mandate callbacks that never arrived. "bayarcash:sync-mandates"
+    | runs twice a day: it settles pending enrolments, re-checks "check_active"
+    | active mandates, and records missed deductions from the last "days" days.
+    | "pause_ms" spaces the API calls to respect Bayarcash's rate limit.
+    |
+    */
+
+    'mandate_sync' => [
+        'enabled'      => env('BAYARCASH_MANDATE_SYNC', true),
+        'days'         => 14,
+        'check_active' => 20,
+        'pause_ms'     => 1000,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Models
     |--------------------------------------------------------------------------
     |
