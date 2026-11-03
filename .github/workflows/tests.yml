@@ -28,6 +28,11 @@ jobs:
           extensions: json, dom, curl, libxml, mbstring
           coverage: none
 
+      # PHP 8.1 can only install Laravel 10, and Composer blocks every Laravel 10 release over advisories.
+      - name: Allow Laravel 10 on PHP 8.1
+        if: matrix.php == '8.1'
+        run: composer config policy.advisories.block false
+
       - name: Install dependencies
         run: composer update --prefer-dist --no-interaction --no-progress
 
